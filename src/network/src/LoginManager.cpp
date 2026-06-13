@@ -35,10 +35,18 @@ void LoginManager::login(const QString &account, const QString &password)
         return;
     }
 
+    // 防止重复点击：如果已有登录请求在进行中，先取消
+    if (m_currentLoginReply) {
+        m_currentLoginReply->abort();
+        m_currentLoginReply->deleteLater();
+        m_currentLoginReply = nullptr;
+    }
+
     ConfigManager *configManager = ConfigManager::instance();
     QUrl url(configManager->loginUrl());
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setTransferTimeout(15000);
 
     QJsonObject json;
     json["account"] = account;
@@ -46,14 +54,15 @@ void LoginManager::login(const QString &account, const QString &password)
     QJsonDocument doc(json);
     QByteArray data = doc.toJson();
 
-    QNetworkReply *reply = m_networkManager->post(request, data);
-    connect(reply, &QNetworkReply::finished, this, &LoginManager::onLoginReplyFinished);
+    m_currentLoginReply = m_networkManager->post(request, data);
+    connect(m_currentLoginReply, &QNetworkReply::finished, this, &LoginManager::onLoginReplyFinished);
 }
 
 void LoginManager::onLoginReplyFinished()
 {
     QNetworkReply *reply = qobject_cast<QNetworkReply*>(sender());
     if (!reply) return;
+    m_currentLoginReply = nullptr;
 
     if (reply->error() != QNetworkReply::NoError) {
         emit networkError(reply->errorString());
@@ -100,6 +109,7 @@ void LoginManager::registerUser(const QString &username, const QString &password
     QUrl url(configManager->registerUrl());
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setTransferTimeout(15000);
 
     QJsonObject json;
     json["username"] = username;
@@ -130,6 +140,7 @@ void LoginManager::registerUserByPhone(const QString &phone, const QString &pass
     QUrl url(configManager->registerUrl());
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setTransferTimeout(15000);
 
     QJsonObject json;
     json["phone"] = phone;

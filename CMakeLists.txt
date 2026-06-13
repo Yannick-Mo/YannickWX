@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 设置自动处理Qt的moc、uic、rcc
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTOUIC ON) 
 set(CMAKE_AUTORCC ON)
 
 # 添加cmake模块路径

@@ -331,6 +331,7 @@ void WeChatWidget::initCurrentUser()
                 localMomentController->setCurrentLoginUser(m_currentLoginUser);
                 ui->avatarPushButton->setContact(m_currentLoginUser);
             });
+    // getAllContacts 内部会先从数据库加载，再网络刷新
     contactController->getAllContacts();
     contactController->loadFriendRequests();
 }

@@ -39,21 +39,21 @@ set(PROJECT_SOURCES
  
 # 创建可执行文件
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
-    qt_add_executable(YaroWX
+    qt_add_executable(YannickWX
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
         src/dialogBox/NewFriend.ui
     )
 else()
     if(ANDROID)
-        add_library(YaroWX SHARED ${PROJECT_SOURCES})
+        add_library(YannickWX SHARED ${PROJECT_SOURCES})
     else()
-        add_executable(YaroWX ${PROJECT_SOURCES})
+        add_executable(YannickWX ${PROJECT_SOURCES})
     endif()
 endif()
 
 # 设置包含目录
-target_include_directories(YaroWX PRIVATE
+target_include_directories(YannickWX PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/media
     ${CMAKE_CURRENT_SOURCE_DIR}/include/ListView
@@ -66,7 +66,7 @@ target_include_directories(YaroWX PRIVATE
 )
 
 # 链接Qt库
-target_link_libraries(YaroWX PRIVATE
+target_link_libraries(YannickWX PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Multimedia
     Qt${QT_VERSION_MAJOR}::MultimediaWidgets
@@ -74,7 +74,7 @@ target_link_libraries(YaroWX PRIVATE
 )
 
 # 链接其他模块的库（根据你的实际库名调整）
-target_link_libraries(YaroWX PRIVATE
+target_link_libraries(YannickWX PRIVATE
     common
     controller
     media
@@ -83,19 +83,14 @@ target_link_libraries(YaroWX PRIVATE
 
 # 平台特定设置
 if(APPLE)
-    set_target_properties(YaroWX PROPERTIES
+    set_target_properties(YannickWX PROPERTIES
         MACOSX_BUNDLE_GUI_IDENTIFIER com.example.myWeChat
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}
         MACOSX_BUNDLE TRUE
     )
 elseif(WIN32)
-    set_target_properties(YaroWX PROPERTIES
+    set_target_properties(YannickWX PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
 endif()
-
-
-
-
-

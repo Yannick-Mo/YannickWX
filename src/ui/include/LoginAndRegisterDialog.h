@@ -50,6 +50,7 @@ private:
     LoginManager *m_loginManager;
 
     void login(const QString &account, const QString& password);
+    void setActionButtonsEnabled(bool enabled);
     void onLoginSuccess();
     void onLoginFailed(const QString &reason);
     void onNetworkError(const QString &error);

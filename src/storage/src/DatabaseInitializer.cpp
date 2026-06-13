@@ -82,7 +82,7 @@ QString DatabaseInitializer::databasePath()
     ConfigManager* configManager = ConfigManager::instance();
     QDir dir(configManager->dataSavePath());
     dir.mkpath(".");
-    return dir.absoluteFilePath("YaroWX.db");
+    return dir.absoluteFilePath("YannickWX.db");
 }
 
 bool DatabaseInitializer::databaseFileExists() const

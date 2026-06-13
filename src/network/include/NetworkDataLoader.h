@@ -69,6 +69,7 @@ private:
                            int timeoutMs = 10000);
 
     LoginManager *m_loginManager;
+    QNetworkAccessManager *m_networkManager;
 };
 
 #endif // NETWORKDATALOADER_H

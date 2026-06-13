@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("AAA");
-    QCoreApplication::setApplicationName("YaroWX");
+    QCoreApplication::setApplicationName("YannickWX");
 
     // 注册元类型
     qRegisterMetaType<Conversation>("Conversation");
@@ -66,7 +66,8 @@ int main(int argc, char *argv[])
     if(loginAndRegisterDialog.exec() == QDialog::Accepted){
         qDebug()<<"登录成功";
     }else {
-        return app.exec();
+        // 用户取消登录，退出程序
+        return 0;
     }
 
     std::unique_ptr<WeChatWidget> wechatWidget;

@@ -90,108 +90,96 @@ void ContactController::reloadContactsFromDatabase()
 
 void ContactController::getAllContacts()
 {
-    QFutureWatcher<QPair<QJsonArray, QString>> *watcher = new QFutureWatcher<QPair<QJsonArray, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<QJsonArray, QString>>::finished, this, [this, watcher]() {
-        auto result = watcher->result();
-        const QJsonArray &friendsArray = result.first;
-        const QString &error = result.second;
+    // 先从数据库加载已有数据（确保 UI 立即可见）
+    reloadContactsFromDatabase();
 
-        if (!error.isEmpty()) {
-            qWarning() << "从服务器拉取好友列表失败:" << error;
-            emit contactsLoadFailed(error);
-            watcher->deleteLater();
-            return;
+    // 再尝试从网络刷新最新数据
+    QJsonArray friendsArray;
+    QString error;
+    if (!m_networkDataLoader->loadFriends(friendsArray, error)) {
+        qWarning() << "从服务器拉取好友列表失败:" << error;
+        return;
+    }
+
+    qint64 currentUserId = m_networkDataLoader->getCurrentLoginUserID();
+
+    // 数据库操作放到后台线程
+    QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
+    connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher]() {
+        if (dbWatcher->result()) {
+            reloadContactsFromDatabase();  // 重新从数据库加载模型
+        } else {
+            qWarning() << "同步好友列表到本地数据库失败";
+            emit contactsLoadFailed("数据库写入失败");
+        }
+        dbWatcher->deleteLater();
+    });
+
+    QFuture<bool> dbFuture = QtConcurrent::run([friendsArray, currentUserId]() -> bool {
+        Orm orm;
+        if (!orm.transaction()) return false;
+
+        // 1. 收集服务器返回的好友 ID 集合
+        QSet<qint64> serverFriendIds;
+        for (const QJsonValue &val : friendsArray) {
+            QJsonObject friendObj = val.toObject();
+            QJsonObject userObj = friendObj["user"].toObject();
+            qint64 friendId = userObj["user_id"].toVariant().toLongLong();
+            if (friendId != -1)
+                serverFriendIds.insert(friendId);
         }
 
-        qint64 currentUserId = m_networkDataLoader->getCurrentLoginUserID();  // 需要实现此方法，见下文
+        // 2. 删除本地有但服务器没有的好友（从 contacts 表中删除）
+        QList<Contact> localContacts = orm.findAll<Contact>();
+        for (const Contact &localContact : localContacts) {
+            if (!serverFriendIds.contains(localContact.user_idValue())) {
+                if (!orm.remove(localContact)) {
+                    orm.rollback();
+                    return false;
+                }
+            }
+        }
 
-        QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
-        connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher]() {
-            if (dbWatcher->result()) {
-                reloadContactsFromDatabase();  // 重新从数据库加载模型
+        // 3. 对服务器每个好友执行 upsert（更新或插入）
+        for (const QJsonValue &val : friendsArray) {
+            QJsonObject friendObj = val.toObject();
+            QJsonObject userObj = friendObj["user"].toObject();
+            qint64 friendId = userObj["user_id"].toVariant().toLongLong();
+            if (friendId == -1) continue;
+
+            // 3.1 处理 User 表（原逻辑不变）
+            User friendUser = parseUserFromJson(userObj, currentUserId);
+            auto existingUser = orm.findById<User>(friendId);
+            if (existingUser.has_value()) {
+                if (!orm.update(friendUser)) {
+                    orm.rollback();
+                    return false;
+                }
             } else {
-                qWarning() << "同步好友列表到本地数据库失败";
-                emit contactsLoadFailed("数据库写入失败");
-            }
-            dbWatcher->deleteLater();
-        });
-
-        QFuture<bool> dbFuture = QtConcurrent::run([friendsArray, currentUserId]() -> bool {
-            Orm orm;
-            if (!orm.transaction()) return false;
-
-            // 1. 收集服务器返回的好友 ID 集合
-            QSet<qint64> serverFriendIds;
-            for (const QJsonValue &val : friendsArray) {
-                QJsonObject friendObj = val.toObject();
-                QJsonObject userObj = friendObj["user"].toObject();
-                qint64 friendId = userObj["user_id"].toVariant().toLongLong();
-                if (friendId != -1)
-                    serverFriendIds.insert(friendId);
-            }
-
-            // 2. 删除本地有但服务器没有的好友（从 contacts 表中删除）
-            QList<Contact> localContacts = orm.findAll<Contact>();
-            for (const Contact &localContact : localContacts) {
-                if (!serverFriendIds.contains(localContact.user_idValue())) {
-                    if (!orm.remove(localContact)) {
-                        orm.rollback();
-                        return false;
-                    }
-                }
-            }
-
-            // 3. 对服务器每个好友执行 upsert（更新或插入）
-            for (const QJsonValue &val : friendsArray) {
-                QJsonObject friendObj = val.toObject();
-                QJsonObject userObj = friendObj["user"].toObject();
-                qint64 friendId = userObj["user_id"].toVariant().toLongLong();
-                if (friendId == -1) continue;
-
-                // 3.1 处理 User 表（原逻辑不变）
-                User friendUser = parseUserFromJson(userObj, currentUserId);
-                auto existingUser = orm.findById<User>(friendId);
-                if (existingUser.has_value()) {
-                    if (!orm.update(friendUser)) {
-                        orm.rollback();
-                        return false;
-                    }
-                } else {
-                    if (!orm.insert(friendUser)) {
-                        orm.rollback();
-                        return false;
-                    }
-                }
-
-                // 3.2 处理 Contact 表：存在则更新，否则插入
-                Contact contact = parseContactFromJson(friendObj);
-                auto existingContact = orm.findById<Contact>(friendId);
-                bool ok;
-                if (existingContact.has_value())
-                    ok = orm.update(contact);
-                else
-                    ok = orm.insert(contact);
-                if (!ok) {
+                if (!orm.insert(friendUser)) {
                     orm.rollback();
                     return false;
                 }
             }
 
-            return orm.commit();
-        });
+            // 3.2 处理 Contact 表：存在则更新，否则插入
+            Contact contact = parseContactFromJson(friendObj);
+            auto existingContact = orm.findById<Contact>(friendId);
+            bool ok;
+            if (existingContact.has_value())
+                ok = orm.update(contact);
+            else
+                ok = orm.insert(contact);
+            if (!ok) {
+                orm.rollback();
+                return false;
+            }
+        }
 
-        dbWatcher->setFuture(dbFuture);
-        watcher->deleteLater();
+        return orm.commit();
     });
 
-    QFuture<QPair<QJsonArray, QString>> future = QtConcurrent::run([this]() {
-        QJsonArray friendsArray;
-        QString error;
-        if (!m_networkDataLoader->loadFriends(friendsArray, error))
-            return qMakePair(QJsonArray(), error);
-        return qMakePair(friendsArray, error);
-    });
-    watcher->setFuture(future);
+    dbWatcher->setFuture(dbFuture);
 }
 
 void ContactController::searchUser(const QString& keyword)
@@ -237,14 +225,30 @@ void ContactController::searchUser(const QString& keyword)
                 netWatcher->deleteLater();
             });
 
-            // 在另一个线程中执行同步网络请求，避免阻塞 UI
-            QFuture<QPair<QJsonArray, QString>> future = QtConcurrent::run([this, keyword]() {
-                QJsonArray users;
-                QString error;
-                m_networkDataLoader->searchUsers(keyword, users, error);
-                return qMakePair(users, error);
-            });
-            netWatcher->setFuture(future);
+            // 网络请求在主线程执行（QNetworkAccessManager 绑定主线程）
+            QJsonArray users;
+            QString error;
+            m_networkDataLoader->searchUsers(keyword, users, error);
+            if (!error.isEmpty()) {
+                qWarning() << "网络搜索失败:" << error;
+                emit searchUsered(QVector<Contact>());
+            } else {
+                QVector<Contact> netContacts;
+                for (const QJsonValue &val : users) {
+                    QJsonObject obj = val.toObject();
+                    Contact contact;
+                    contact.setuser_id(obj["user_id"].toVariant().toLongLong());
+                    contact.setremark_name(obj["nickname"].toString());
+                    contact.user.setaccount(obj["account"].toString());
+                    contact.user.setavatar(obj["avatar"].toString());
+                    contact.user.setuser_id(obj["user_id"].toVariant().toLongLong());
+                    contact.user.setnickname(obj["nickname"].toString());
+                    contact.user.setregion(obj["region"].toString());
+                    netContacts.append(contact);
+                }
+                emit searchUsered(netContacts);
+            }
+            netWatcher->deleteLater();
         }
         watcher->deleteLater();
     });
@@ -258,83 +262,68 @@ void ContactController::searchUser(const QString& keyword)
 
 void ContactController::getContact(qint64 userId)
 {
-    QFutureWatcher<QPair<QJsonObject, QString>> *watcher = new QFutureWatcher<QPair<QJsonObject, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<QJsonObject, QString>>::finished, this, [this, watcher, userId]() {
-        auto result = watcher->result();
-        const QJsonObject &friendData = result.first;
-        const QString &error = result.second;
+    // 网络请求在主线程执行
+    QJsonObject friendData;
+    QString error;
+    if (!m_networkDataLoader->getFriend(userId, friendData, error)) {
+        qWarning() << "从服务器获取好友详情失败:" << error;
+        emit contactLoadFailed(userId, error);
+        return;
+    }
 
-        if (!error.isEmpty()) {
-            qWarning() << "从服务器获取好友详情失败:" << error;
-            emit contactLoadFailed(userId, error);
-            watcher->deleteLater();
-            return;
-        }
-
-        qint64 currentUserId = m_networkDataLoader->getCurrentLoginUserID();
-        QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
-        connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, friendData, userId, currentUserId]() {
-            if (dbWatcher->result()) {
-                // 更新模型
-                Contact contact = parseContactFromJson(friendData);
-                m_contactTreeModel->addContact(contact);
-                emit contactUpdated(userId);
-            } else {
-                qWarning() << "更新本地好友数据失败";
-            }
-            dbWatcher->deleteLater();
-        });
-
-        QFuture<bool> dbFuture = QtConcurrent::run([friendData, currentUserId]() -> bool {
-            Orm orm;
-            if (!orm.transaction()) return false;
-
-            QJsonObject userObj = friendData["user"].toObject();
-            qint64 friendId = userObj["user_id"].toVariant().toLongLong();
-            if (friendId == 0) return false;
-
-            // 更新 User
-            User friendUser = parseUserFromJson(userObj, currentUserId);
-            auto existingUser = orm.findById<User>(friendId);
-            if (existingUser.has_value()) {
-                if (!orm.update(friendUser)) {
-                    orm.rollback();
-                    return false;
-                }
-            } else {
-                if (!orm.insert(friendUser)) {
-                    orm.rollback();
-                    return false;
-                }
-            }
-
-            // 更新 Contact（存在则更新，不存在则插入）
+    qint64 currentUserId = m_networkDataLoader->getCurrentLoginUserID();
+    QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
+    connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, friendData, userId, currentUserId]() {
+        if (dbWatcher->result()) {
+            // 更新模型
             Contact contact = parseContactFromJson(friendData);
-            auto existingContact = orm.findById<Contact>(friendId);
-            bool ok;
-            if (existingContact.has_value())
-                ok = orm.update(contact);
-            else
-                ok = orm.insert(contact);
-            if (!ok) {
+            m_contactTreeModel->addContact(contact);
+            emit contactUpdated(userId);
+        } else {
+            qWarning() << "更新本地好友数据失败";
+        }
+        dbWatcher->deleteLater();
+    });
+
+    QFuture<bool> dbFuture = QtConcurrent::run([friendData, currentUserId]() -> bool {
+        Orm orm;
+        if (!orm.transaction()) return false;
+
+        QJsonObject userObj = friendData["user"].toObject();
+        qint64 friendId = userObj["user_id"].toVariant().toLongLong();
+        if (friendId == 0) return false;
+
+        // 更新 User
+        User friendUser = parseUserFromJson(userObj, currentUserId);
+        auto existingUser = orm.findById<User>(friendId);
+        if (existingUser.has_value()) {
+            if (!orm.update(friendUser)) {
                 orm.rollback();
                 return false;
             }
+        } else {
+            if (!orm.insert(friendUser)) {
+                orm.rollback();
+                return false;
+            }
+        }
 
-            return orm.commit();
-        });
-        dbWatcher->setFuture(dbFuture);
-        watcher->deleteLater();
-    });
+        // 更新 Contact（存在则更新，不存在则插入）
+        Contact contact = parseContactFromJson(friendData);
+        auto existingContact = orm.findById<Contact>(friendId);
+        bool ok;
+        if (existingContact.has_value())
+            ok = orm.update(contact);
+        else
+            ok = orm.insert(contact);
+        if (!ok) {
+            orm.rollback();
+            return false;
+        }
 
-    QFuture<QPair<QJsonObject, QString>> future = QtConcurrent::run([this, userId]() {
-        QJsonObject friendData;
-        QString error;
-        if (!m_networkDataLoader->getFriend(userId, friendData, error))
-            return qMakePair(QJsonObject(), error);
-        return qMakePair(friendData, error);
+        return orm.commit();
     });
-    watcher->setFuture(future);
+    dbWatcher->setFuture(dbFuture);
 }
 
 void ContactController::updateContact(const Contact& contact)
@@ -345,99 +334,79 @@ void ContactController::updateContact(const Contact& contact)
     updateData["tags"] = contact.tagsValue();
     updateData["is_starred"] = contact.is_starredValue();
     updateData["is_blocked"] = contact.is_blockedValue();
-    // 注意：description, phone_note, email_note, source 等服务端是否允许？根据 RestfulFriendCtrl 只允许这些，若需要可追加，但服务端代码只删除了 id, user_id, friend_id, created_at, updated_at, status，其他字段如 description 也会被更新，所以可以全部传。但为了安全，只传服务端明确允许的字段。
 
-    QFutureWatcher<QPair<bool, QString>> *watcher = new QFutureWatcher<QPair<bool, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [this, watcher, contact]() {
-        auto result = watcher->result();
-        if (!result.first) {
-            qWarning() << "更新服务器失败:" << result.second;
-            emit contactUpdateFailed(contact.user_idValue(), result.second);
-            watcher->deleteLater();
-            return;
+    // 网络请求在主线程执行
+    QString error;
+    qint64 userId = contact.user_idValue();
+    bool ok = m_networkDataLoader->updateFriend(userId, updateData, error);
+    if (!ok) {
+        qWarning() << "更新服务器失败:" << error;
+        emit contactUpdateFailed(userId, error);
+        return;
+    }
+
+    // 服务器成功，更新本地数据库
+    QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
+    connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, contact]() {
+        if (dbWatcher->result()) {
+            m_contactTreeModel->addContact(contact);
+            emit contactUpdated(contact.user_idValue());
+        } else {
+            qWarning() << "本地更新失败，但服务器已更新，尝试重新拉取";
+            getContact(contact.user_idValue());
         }
-
-        // 服务器成功，更新本地数据库
-        QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
-        connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, contact]() {
-            if (dbWatcher->result()) {
-                m_contactTreeModel->addContact(contact);
-                emit contactUpdated(contact.user_idValue());
-            } else {
-                qWarning() << "本地更新失败，但服务器已更新，尝试重新拉取";
-                getContact(contact.user_idValue());
-            }
-            dbWatcher->deleteLater();
-        });
-
-        QFuture<bool> dbFuture = QtConcurrent::run([contact]() -> bool {
-            Orm orm;
-            if (!orm.transaction()) return false;
-            auto existing = orm.findById<Contact>(contact.user_idValue());
-            bool ok;
-            if (existing.has_value())
-                ok = orm.update(contact);
-            else
-                ok = orm.insert(contact);
-            if (ok) return orm.commit();
-            else {
-                orm.rollback();
-                return false;
-            }
-        });
-        dbWatcher->setFuture(dbFuture);
-        watcher->deleteLater();
+        dbWatcher->deleteLater();
     });
 
-    QFuture<QPair<bool, QString>> future = QtConcurrent::run([this, userId = contact.user_idValue(), updateData]() {
-        QString error;
-        bool ok = m_networkDataLoader->updateFriend(userId, updateData, error);
-        return qMakePair(ok, error);
+    QFuture<bool> dbFuture = QtConcurrent::run([contact]() -> bool {
+        Orm orm;
+        if (!orm.transaction()) return false;
+        auto existing = orm.findById<Contact>(contact.user_idValue());
+        bool ok;
+        if (existing.has_value())
+            ok = orm.update(contact);
+        else
+            ok = orm.insert(contact);
+        if (ok) return orm.commit();
+        else {
+            orm.rollback();
+            return false;
+        }
     });
-    watcher->setFuture(future);
+    dbWatcher->setFuture(dbFuture);
 }
 
 void ContactController::deleteContact(qint64 userId)
 {
-    QFutureWatcher<QPair<bool, QString>> *watcher = new QFutureWatcher<QPair<bool, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [this, watcher, userId]() {
-        auto result = watcher->result();
-        if (!result.first) {
-            qWarning() << "删除服务器好友失败:" << result.second;
-            emit contactDeleteFailed(userId, result.second);
-            watcher->deleteLater();
-            return;
+    // 网络请求在主线程执行
+    QString error;
+    bool ok = m_networkDataLoader->deleteFriend(userId, error);
+    if (!ok) {
+        qWarning() << "删除服务器好友失败:" << error;
+        emit contactDeleteFailed(userId, error);
+        return;
+    }
+
+    // 服务器成功，删除本地记录
+    QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
+    connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, userId]() {
+        if (dbWatcher->result()) {
+            m_contactTreeModel->removeContact(userId);
+            emit contactRemoved(userId);
+        } else {
+            qWarning() << "本地删除失败，但服务器已删除";
         }
-
-        // 服务器成功，删除本地记录
-        QFutureWatcher<bool> *dbWatcher = new QFutureWatcher<bool>(this);
-        connect(dbWatcher, &QFutureWatcher<bool>::finished, this, [this, dbWatcher, userId]() {
-            if (dbWatcher->result()) {
-                m_contactTreeModel->removeContact(userId);
-                emit contactRemoved(userId);
-            } else {
-                qWarning() << "本地删除失败，但服务器已删除";
-            }
-            dbWatcher->deleteLater();
-        });
-
-        QFuture<bool> dbFuture = QtConcurrent::run([userId]() -> bool {
-            Orm orm;
-            auto contactOpt = orm.findById<Contact>(userId);
-            if (!contactOpt.has_value())
-                return true;   // 本地本来就不存在，视为成功
-            return orm.remove(contactOpt.value());
-        });
-        dbWatcher->setFuture(dbFuture);
-        watcher->deleteLater();
+        dbWatcher->deleteLater();
     });
 
-    QFuture<QPair<bool, QString>> future = QtConcurrent::run([this, userId]() {
-        QString error;
-        bool ok = m_networkDataLoader->deleteFriend(userId, error);
-        return qMakePair(ok, error);
+    QFuture<bool> dbFuture = QtConcurrent::run([userId]() -> bool {
+        Orm orm;
+        auto contactOpt = orm.findById<Contact>(userId);
+        if (!contactOpt.has_value())
+            return true;   // 本地本来就不存在，视为成功
+        return orm.remove(contactOpt.value());
     });
-    watcher->setFuture(future);
+    dbWatcher->setFuture(dbFuture);
 }
 
 void ContactController::setContactStarred(qint64 userId, bool starred)
@@ -646,7 +615,3 @@ void ContactController::processFriendRequest(
     });
     watcher->setFuture(future);
 }
-
-
-
-

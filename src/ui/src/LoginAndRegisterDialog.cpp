@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QStackedWidget>
 #include <QAbstractButton>
+#include <QApplication>
 #include <QMessageBox>
 
 
@@ -157,7 +158,9 @@ void LoginAndRegisterDialog::on_phoneRegisterBnt_clicked()
         return;
     }
 
-    // 调用注册（手机号方式）
+    setActionButtonsEnabled(false);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
     m_loginManager->registerUserByPhone(phone, password);
 }
 
@@ -172,6 +175,9 @@ void LoginAndRegisterDialog::on_actRegisterBnt_clicked()
         return;
     }
 
+    setActionButtonsEnabled(false);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
     m_loginManager->registerUser(username, password);
 }
 
@@ -180,6 +186,10 @@ void LoginAndRegisterDialog::on_phoneLoginBnt_clicked()
 {
     QString account = ui->phoneLineEdit->text();
     QString password = ui->phPasswordLineEdit->text();
+
+    setActionButtonsEnabled(false);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
     login(account, password);
 }
 
@@ -188,6 +198,10 @@ void LoginAndRegisterDialog::on_actLoginBnt_clicked()
 {
     QString account = ui->accountLineEdit->text();
     QString password = ui->actPasswordLineEdit->text();
+
+    setActionButtonsEnabled(false);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+
     login(account, password);
 }
 
@@ -201,6 +215,8 @@ void LoginAndRegisterDialog::login(const QString& account, const QString &passwo
 {
     if (account.isEmpty() || password.isEmpty()) {
         QMessageBox::warning(this, "提示", "请输入账号和密码");
+        setActionButtonsEnabled(true);
+        QApplication::restoreOverrideCursor();
         return;
     }
 
@@ -209,32 +225,48 @@ void LoginAndRegisterDialog::login(const QString& account, const QString &passwo
 
 void LoginAndRegisterDialog::onLoginSuccess()
 {
+    setActionButtonsEnabled(true);
+    QApplication::restoreOverrideCursor();
     QMessageBox::information(this, "成功", "登录成功");
     accept();
 }
 
 void LoginAndRegisterDialog::onLoginFailed(const QString &reason)
 {
+    setActionButtonsEnabled(true);
+    QApplication::restoreOverrideCursor();
     qDebug()<< reason;
     QMessageBox::critical(this, "登录失败", "登录失败");
 }
 
 void LoginAndRegisterDialog::onNetworkError(const QString &error)
 {
+    setActionButtonsEnabled(true);
+    QApplication::restoreOverrideCursor();
     qDebug()<< error;
-    QMessageBox::critical(this, "网络错误", "登录失败");
+    QMessageBox::critical(this, "网络错误", "网络连接超时或服务器不可达，请检查网络后重试");
 }
 
 
 void LoginAndRegisterDialog::onRegisterSuccess(qint64 userId)
 {
+    setActionButtonsEnabled(true);
+    QApplication::restoreOverrideCursor();
     QMessageBox::information(this, "注册成功", QString("注册成功！用户ID：%1").arg(userId));
 }
 
 void LoginAndRegisterDialog::onRegisterFailed(const QString &reason)
 {
+    setActionButtonsEnabled(true);
+    QApplication::restoreOverrideCursor();
     QMessageBox::critical(this, "注册失败", reason);
 }
 
-
-
+void LoginAndRegisterDialog::setActionButtonsEnabled(bool enabled)
+{
+    ui->phoneLoginBnt->setEnabled(enabled);
+    ui->phoneRegisterBnt->setEnabled(enabled);
+    ui->LoginOrRegister->setEnabled(enabled);
+    ui->actLoginBnt->setEnabled(enabled);
+    ui->actRegisterBnt->setEnabled(enabled);
+}

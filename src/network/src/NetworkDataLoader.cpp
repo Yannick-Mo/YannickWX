@@ -12,7 +12,7 @@
 #include <QUrl>
 
 NetworkDataLoader::NetworkDataLoader(LoginManager *loginManager, QObject *parent)
-    : QObject(parent), m_loginManager(loginManager)
+    : QObject(parent), m_loginManager(loginManager), m_networkManager(new QNetworkAccessManager(this))
 {
 }
 
@@ -32,13 +32,12 @@ bool NetworkDataLoader::sendGetRequest(const QUrl &url,
         return false;
     }
 
-    // 改为局部 QNetworkAccessManager（无父对象，线程安全）
-    QNetworkAccessManager localManager;
+    // 使用成员 QNetworkAccessManager（主线程创建，线程安全）
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
 
-    QNetworkReply *reply = localManager.get(request);
+    QNetworkReply *reply = m_networkManager->get(request);
 
     // 使用事件循环阻塞等待
     QEventLoop loop;
@@ -91,13 +90,12 @@ bool NetworkDataLoader::sendPostRequest(const QUrl &url,
         return false;
     }
 
-    QNetworkAccessManager localManager;
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
 
     QByteArray postData = QJsonDocument(payload).toJson();
-    QNetworkReply *reply = localManager.post(request, postData);
+    QNetworkReply *reply = m_networkManager->post(request, postData);
 
     // 2. 事件循环等待（保持不变）
     QEventLoop loop;
@@ -149,14 +147,13 @@ bool NetworkDataLoader::sendPutRequest(const QUrl &url,
         return false;
     }
 
-    // 局部 QNetworkAccessManager，避免跨线程问题
-    QNetworkAccessManager localManager;
+    // 成员 QNetworkAccessManager，避免跨线程问题
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
 
     QByteArray putData = QJsonDocument(payload).toJson();
-    QNetworkReply *reply = localManager.put(request, putData);
+    QNetworkReply *reply = m_networkManager->put(request, putData);
 
     // 事件循环等待
     QEventLoop loop;
@@ -207,12 +204,11 @@ bool NetworkDataLoader::sendDeleteRequest(const QUrl &url,
         return false;
     }
 
-    QNetworkAccessManager localManager;
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
     request.setRawHeader("Authorization", ("Bearer " + token).toUtf8());
 
-    QNetworkReply *reply = localManager.deleteResource(request);  // DELETE 请求
+    QNetworkReply *reply = m_networkManager->deleteResource(request);  // DELETE 请求
 
     QEventLoop loop;
     QTimer timeoutTimer;
@@ -591,9 +587,3 @@ bool NetworkDataLoader::deleteFriend(qint64 friendId, QString &errorMessage)
     }
     return true;
 }
-
-
-
-
-
-

@@ -41,6 +41,7 @@ private slots:
 
 private:
     QNetworkAccessManager *m_networkManager;
+    QNetworkReply *m_currentLoginReply = nullptr;
     QNetworkReply *m_currentRegisterReply = nullptr;
 
     QString m_token;

@@ -10,3 +10,4 @@ CMakeCache.txt
 CMakeLists.txt.user
 .vscode/
 .idea/
+.cache/

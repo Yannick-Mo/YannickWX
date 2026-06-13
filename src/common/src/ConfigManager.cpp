@@ -1,4 +1,4 @@
-#include "ConfigManager.h"
+ #include "ConfigManager.h"
 #include <QStandardPaths>
 #include <QDir>
 #include <QFile>
@@ -74,12 +74,12 @@ void ConfigManager::createDefaultConfig(const QString& configPath)
 
         out << "# " << QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss") << "\n";
         out << "[General]\n";
-        out << "AppName=YaroWX\n";
+        out << "AppName=YannickWX\n";
         out << "Version=1.0.0\n\n";
 
         out << "[Network]\n";
-        out << "baseUrl=http://localhost:8080\n";
-        out << "WebSocketUrl=ws://localhost:8080/chat\n";
+        out << "baseUrl=http://114.132.185.214:25000\n";
+        out << "WebSocketUrl=ws://114.132.185.214:25000/chat\n";
         out << "LoginUrl=/api/v1/login\n";
         out << "RegisterUrl=/api/v1/register\n";
         out << "GetAllFriendUrl=/api/v1/friend\n";
@@ -96,7 +96,7 @@ void ConfigManager::createDefaultConfig(const QString& configPath)
         out << "MaxRetry=5\n\n";
 
         out << "[Data]\n";
-        out << "SavePath=" << QDir::homePath() + "/YaroWX/data" << "\n";
+        out << "SavePath=" << QDir::homePath() + "/YannickWX/data" << "\n";
 
         configFile.close();
     }
@@ -104,14 +104,14 @@ void ConfigManager::createDefaultConfig(const QString& configPath)
 
 QString ConfigManager::baseUrl() const
 {
-    if (!m_settings) return "http://localhost:8080";
-    return m_settings->value("Network/baseUrl", "http://localhost:8080").toString();
+    if (!m_settings) return "http://114.132.185.214:25000";
+    return m_settings->value("Network/baseUrl", "http://114.132.185.214:25000").toString();
 }
 
 QString ConfigManager::webSocketUrl() const
 {
-    if (!m_settings) return "ws://localhost:8080/chat";
-    return m_settings->value("Network/WebSocketUrl", "ws://localhost:8080/chat").toString();
+    if (!m_settings) return "ws://114.132.185.214:25000/chat";
+    return m_settings->value("Network/WebSocketUrl", "ws://114.132.185.214:25000/chat").toString();
 }
 
 QString ConfigManager::loginUrl() const
@@ -197,9 +197,9 @@ QString ConfigManager::dataSavePath() const
 {
     QString basePath;
     if (!m_settings) {
-        basePath = QDir::homePath() + "/YaroWX/data";
+        basePath = QDir::homePath() + "/YannickWX/data";
     } else {
-        basePath = m_settings->value("Data/SavePath", QDir::homePath() + "/YaroWX/data").toString();
+        basePath = m_settings->value("Data/SavePath", QDir::homePath() + "/YannickWX/data").toString();
     }
     return basePath + "/user_" + currentLoginUserID;
 }
